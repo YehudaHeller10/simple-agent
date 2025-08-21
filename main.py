@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTextEdit, QHBoxLayout, QFrame
+    QTextEdit, QHBoxLayout, QFrame, QComboBox
 )
 
 from agent_tool import AndroidAgent, AgentProgress
@@ -21,13 +21,14 @@ class WorkerThread(QThread):
     done_signal = Signal(str)
     error_signal = Signal(str)
 
-    def __init__(self, idea: str):
+    def __init__(self, idea: str, model_key: str):
         super().__init__()
         self.idea = idea
+        self.model_key = model_key
 
     def run(self):
         try:
-            agent = AndroidAgent(progress=AgentProgress(self.progress_signal.emit))
+            agent = AndroidAgent(progress=AgentProgress(self.progress_signal.emit), model_key=self.model_key)
             target = agent.run(self.idea)
             self.done_signal.emit(str(target))
         except Exception as exc:
@@ -75,6 +76,15 @@ class MainWindow(QWidget):
         subtitle = QLabel("Describe your app in simple words. We'll handle the rest.")
         subtitle.setObjectName("subtitle")
 
+        # Model selector
+        self.model_combo = QComboBox()
+        self.model_combo.addItems([
+            "TinyLlama 1.1B Chat Q5",
+            "Phi-2 Q4_K_M",
+            "CodeLlama 7B Q4_K_M",
+        ])
+        self.model_combo.setCurrentText("TinyLlama 1.1B Chat Q5")
+
         self.input = QTextEdit()
         self.input.setPlaceholderText("e.g., A shopping list app with categories and reminders")
         self.input.setFixedHeight(100)
@@ -91,6 +101,8 @@ class MainWindow(QWidget):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(self.input)
+        layout.addWidget(QLabel("Model (for local use):"))
+        layout.addWidget(self.model_combo)
         layout.addWidget(self.button)
         layout.addWidget(self.status)
         layout.addWidget(self.log)
@@ -125,7 +137,8 @@ class MainWindow(QWidget):
         self.button.setDisabled(True)
         self.log.clear()
         self.append_log("Starting...")
-        self.worker = WorkerThread(idea)
+        model_key = self.model_combo.currentText()
+        self.worker = WorkerThread(idea, model_key)
         self.worker.progress_signal.connect(self.append_log)
         self.worker.done_signal.connect(self.on_done)
         self.worker.error_signal.connect(self.on_error)

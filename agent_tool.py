@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Dict
 
-from llm_responder import build_llm_response
+from llm_responder import build_llm_response, MODEL_REGISTRY
 
 
 BASE_DIR = Path(__file__).parent
@@ -19,8 +19,9 @@ class AgentProgress:
 
 
 class AndroidAgent:
-    def __init__(self, progress: Optional[AgentProgress] = None):
+    def __init__(self, progress: Optional[AgentProgress] = None, model_key: Optional[str] = None):
         self.progress = progress or AgentProgress(lambda _: None)
+        self.model_key = model_key or "CodeLlama 7B Q4_K_M"
 
     def _notify(self, message: str) -> None:
         try:
@@ -60,7 +61,7 @@ class AndroidAgent:
             "Choose a short, friendly Android app name for this idea. "
             "Respond ONLY with the name.\n\nIdea:" + idea
         )
-        name = build_llm_response(instruction)
+        name = build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
         return (name or "MyApp").strip().replace("\n", " ")[:40]
 
     def _ask_architecture(self, idea: str, app_name: str) -> str:
@@ -69,7 +70,7 @@ class AndroidAgent:
             "List the files to implement with brief purpose. Keep it minimal."
             f"\n\nApp: {app_name}\nIdea: {idea}"
         )
-        return build_llm_response(instruction)
+        return build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
 
     def _llm_file_update(self, filepath: Path, friendly_label: str) -> None:
         try:
@@ -83,7 +84,7 @@ class AndroidAgent:
             "Target a production-ready Android implementation that matches the app idea."
         )
         self._notify(friendly_label)
-        response = build_llm_response(instruction, context=existing)
+        response = build_llm_response(instruction, context=existing, model_spec=MODEL_REGISTRY.get(self.model_key))
 
         # Best-effort JSON extraction
         try:

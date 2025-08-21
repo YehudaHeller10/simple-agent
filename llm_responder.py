@@ -1,14 +1,31 @@
 import os
-import threading
 from typing import Optional, Callable, Dict, Any
 
 from huggingface_hub import hf_hub_download
-from llama_cpp import Llama
 
 
 DEFAULT_MODEL_REPO = os.environ.get("ANDROID_AGENT_MODEL_REPO", "TheBloke/CodeLlama-7B-GGUF")
 DEFAULT_MODEL_FILE = os.environ.get("ANDROID_AGENT_MODEL_FILE", "codellama-7b.Q4_K_M.gguf")
 MODEL_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".android_agent", "models")
+
+# Friendly presets for local models (small, CPU-friendly first)
+MODEL_REGISTRY: Dict[str, Dict[str, str]] = {
+    "TinyLlama 1.1B Chat Q5": {
+        "repo_id": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+        "filename": "tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
+        "model_type": "llama",
+    },
+    "Phi-2 Q4_K_M": {
+        "repo_id": "TheBloke/phi-2-GGUF",
+        "filename": "phi-2.Q4_K_M.gguf",
+        "model_type": "phi",
+    },
+    "CodeLlama 7B Q4_K_M": {
+        "repo_id": "TheBloke/CodeLlama-7B-GGUF",
+        "filename": "codellama-7b.Q4_K_M.gguf",
+        "model_type": "llama",
+    },
+}
 
 
 class GGUFModelManager:
@@ -21,12 +38,15 @@ class GGUFModelManager:
                  repo_id: str = DEFAULT_MODEL_REPO,
                  filename: str = DEFAULT_MODEL_FILE,
                  cache_dir: str = MODEL_CACHE_DIR,
+                 model_type: str = "llama",
                  progress_cb: Optional[Callable[[str], None]] = None):
         self.repo_id = repo_id
         self.filename = filename
         self.cache_dir = cache_dir
+        self.model_type = model_type
         self.progress_cb = progress_cb or (lambda msg: None)
-        self._llm: Optional[Llama] = None
+        self._backend = None  # "llama_cpp" or "ctransformers"
+        self._llm = None
 
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -59,14 +79,27 @@ class GGUFModelManager:
             return
         model_path = self.ensure_model()
         self._notify("Starting the AI engine...")
-        # Conservative defaults for low-spec laptops
-        self._llm = Llama(
-            model_path=model_path,
-            n_ctx=4096,
-            n_threads=max(2, os.cpu_count() or 4),
-            n_gpu_layers=0,
-            verbose=False
-        )
+        # Try llama.cpp first
+        try:
+            from llama_cpp import Llama  # type: ignore
+            self._llm = Llama(
+                model_path=model_path,
+                n_ctx=4096,
+                n_threads=max(2, os.cpu_count() or 4),
+                n_gpu_layers=0,
+                verbose=False
+            )
+            self._backend = "llama_cpp"
+        except Exception:
+            # Fallback to ctransformers (pure wheels available on Windows)
+            from ctransformers import AutoModelForCausalLM  # type: ignore
+            self._llm = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                model_type=self.model_type or "llama",
+                gpu_layers=0,
+                context_length=4096
+            )
+            self._backend = "ctransformers"
         self._notify("AI engine is ready.")
 
     def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1024) -> str:
@@ -75,22 +108,45 @@ class GGUFModelManager:
         assert self._llm is not None
 
         prompt = f"<s>[INST]<<SYS>>\n{system_prompt}\n<</SYS>>\n{user_prompt}[/INST]"
-        output = self._llm(
-            prompt,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.9,
-            stop=["</s>"]
-        )
-        return output["choices"][0]["text"].strip()
+        if self._backend == "llama_cpp":
+            output = self._llm(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+                stop=["</s>"]
+            )
+            return output["choices"][0]["text"].strip()
+        else:
+            # ctransformers generation API
+            return self._llm(
+                prompt,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+                stop=["</s>"]
+            )
 
 
-def build_llm_response(task_instruction: str, context: Optional[str] = None, progress_cb: Optional[Callable[[str], None]] = None) -> str:
+def build_llm_response(task_instruction: str,
+                       context: Optional[str] = None,
+                       progress_cb: Optional[Callable[[str], None]] = None,
+                       model_spec: Optional[Dict[str, str]] = None) -> str:
     """High-level helper that initializes the model and returns a response.
 
     This is the single entry the agent uses.
     """
-    manager = GGUFModelManager(progress_cb=progress_cb)
+    model_spec = model_spec or {
+        "repo_id": DEFAULT_MODEL_REPO,
+        "filename": DEFAULT_MODEL_FILE,
+        "model_type": "llama",
+    }
+    manager = GGUFModelManager(
+        repo_id=model_spec.get("repo_id", DEFAULT_MODEL_REPO),
+        filename=model_spec.get("filename", DEFAULT_MODEL_FILE),
+        model_type=model_spec.get("model_type", "llama"),
+        progress_cb=progress_cb,
+    )
 
     system_prompt = (
         "You are an expert Android app developer. Always respond in valid JSON when asked, "
