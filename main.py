@@ -1,3 +1,5 @@
+import os
+import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout,
@@ -387,3 +389,12 @@ class MainWindow(QMainWindow):
             self.last_project_dir = path
             self.populate_code_list(path)
             self.toggle_code_btn.setEnabled(True)
+
+def main():
+    app = QApplication(sys.argv)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
