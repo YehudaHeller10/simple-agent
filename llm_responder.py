@@ -90,16 +90,23 @@ class GGUFModelManager:
                 verbose=False
             )
             self._backend = "llama_cpp"
-        except Exception:
+        except Exception as e_llama:
             # Fallback to ctransformers (pure wheels available on Windows)
-            from ctransformers import AutoModelForCausalLM  # type: ignore
-            self._llm = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                model_type=self.model_type or "llama",
-                gpu_layers=0,
-                context_length=4096
-            )
-            self._backend = "ctransformers"
+            try:
+                from ctransformers import AutoModelForCausalLM  # type: ignore
+                self._llm = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    model_type=self.model_type or "llama",
+                    gpu_layers=0,
+                    context_length=4096
+                )
+                self._backend = "ctransformers"
+            except Exception as e_ctrans:
+                raise RuntimeError(
+                    "Missing LLM runtime. Please install one of: "
+                    "'pip install ctransformers' (recommended on Windows) or "
+                    "'pip install llama-cpp-python'."
+                ) from e_ctrans
         self._notify("AI engine is ready.")
 
     def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1024) -> str:
