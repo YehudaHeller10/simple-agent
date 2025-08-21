@@ -14,16 +14,25 @@ MODEL_REGISTRY: Dict[str, Dict[str, str]] = {
         "repo_id": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
         "filename": "tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
         "model_type": "llama",
+        "backend": "auto"
     },
     "Phi-2 Q4_K_M": {
         "repo_id": "TheBloke/phi-2-GGUF",
         "filename": "phi-2.Q4_K_M.gguf",
         "model_type": "phi",
+        "backend": "auto"
     },
     "CodeLlama 7B Q4_K_M": {
         "repo_id": "TheBloke/CodeLlama-7B-GGUF",
         "filename": "codellama-7b.Q4_K_M.gguf",
         "model_type": "llama",
+        "backend": "auto"
+    },
+    "GPT4All orca-mini-3b Q4": {
+        "repo_id": "",  # GPT4All manages download/catalog
+        "filename": "orca-mini-3b-gguf2-q4_0.gguf",  # GPT4All model id
+        "model_type": "llama",
+        "backend": "gpt4all"
     },
 }
 
@@ -39,11 +48,13 @@ class GGUFModelManager:
                  filename: str = DEFAULT_MODEL_FILE,
                  cache_dir: str = MODEL_CACHE_DIR,
                  model_type: str = "llama",
+                 backend: str = "auto",
                  progress_cb: Optional[Callable[[str], None]] = None):
         self.repo_id = repo_id
         self.filename = filename
         self.cache_dir = cache_dir
         self.model_type = model_type
+        self.backend = backend
         self.progress_cb = progress_cb or (lambda msg: None)
         self._backend = None  # "llama_cpp" or "ctransformers"
         self._llm = None
@@ -57,7 +68,11 @@ class GGUFModelManager:
             pass
 
     def ensure_model(self) -> str:
-        """Ensures the GGUF file exists locally, downloading if needed."""
+        """Ensures the model exists locally. For GPT4All we delegate download to its SDK."""
+        if self.backend == "gpt4all":
+            # GPT4All will handle download to model_path if needed.
+            return self.filename
+
         local_path = os.path.join(self.cache_dir, self.filename)
         if os.path.exists(local_path):
             return local_path
@@ -79,34 +94,43 @@ class GGUFModelManager:
             return
         model_path = self.ensure_model()
         self._notify("Starting the AI engine...")
-        # Try llama.cpp first
-        try:
-            from llama_cpp import Llama  # type: ignore
-            self._llm = Llama(
-                model_path=model_path,
-                n_ctx=4096,
-                n_threads=max(2, os.cpu_count() or 4),
-                n_gpu_layers=0,
-                verbose=False
-            )
-            self._backend = "llama_cpp"
-        except Exception as e_llama:
-            # Fallback to ctransformers (pure wheels available on Windows)
+        if self.backend == "gpt4all":
             try:
-                from ctransformers import AutoModelForCausalLM  # type: ignore
-                self._llm = AutoModelForCausalLM.from_pretrained(
-                    model_path,
-                    model_type=self.model_type or "llama",
-                    gpu_layers=0,
-                    context_length=4096
+                from gpt4all import GPT4All  # type: ignore
+            except Exception as e:
+                raise RuntimeError("Missing GPT4All runtime. Please install: pip install gpt4all") from e
+            # Use our cache dir for GPT4All models too
+            os.makedirs(self.cache_dir, exist_ok=True)
+            self._llm = GPT4All(model_name=model_path, model_path=self.cache_dir, allow_download=True)
+            self._backend = "gpt4all"
+        else:
+            # Try llama.cpp first
+            try:
+                from llama_cpp import Llama  # type: ignore
+                self._llm = Llama(
+                    model_path=model_path,
+                    n_ctx=4096,
+                    n_threads=max(2, os.cpu_count() or 4),
+                    n_gpu_layers=0,
+                    verbose=False
                 )
-                self._backend = "ctransformers"
-            except Exception as e_ctrans:
-                raise RuntimeError(
-                    "Missing LLM runtime. Please install one of: "
-                    "'pip install ctransformers' (recommended on Windows) or "
-                    "'pip install llama-cpp-python'."
-                ) from e_ctrans
+                self._backend = "llama_cpp"
+            except Exception as e_llama:
+                # Fallback to ctransformers (pure wheels available on Windows)
+                try:
+                    from ctransformers import AutoModelForCausalLM  # type: ignore
+                    self._llm = AutoModelForCausalLM.from_pretrained(
+                        model_path,
+                        model_type=self.model_type or "llama",
+                        gpu_layers=0,
+                        context_length=4096
+                    )
+                    self._backend = "ctransformers"
+                except Exception as e_ctrans:
+                    raise RuntimeError(
+                        "Missing LLM runtime. Please install one of: "
+                        "'pip install gpt4all' (easiest), 'pip install ctransformers', or 'pip install llama-cpp-python'."
+                    ) from e_ctrans
         self._notify("AI engine is ready.")
 
     def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1024) -> str:
@@ -124,7 +148,7 @@ class GGUFModelManager:
                 stop=["</s>"]
             )
             return output["choices"][0]["text"].strip()
-        else:
+        elif self._backend == "ctransformers":
             # ctransformers generation API
             return self._llm(
                 prompt,
@@ -132,6 +156,14 @@ class GGUFModelManager:
                 temperature=temperature,
                 top_p=0.9,
                 stop=["</s>"]
+            )
+        else:
+            # GPT4All API
+            return self._llm.generate(
+                prompt,
+                max_tokens=max_tokens,
+                temp=temperature,
+                top_p=0.9
             )
 
 
@@ -152,6 +184,7 @@ def build_llm_response(task_instruction: str,
         repo_id=model_spec.get("repo_id", DEFAULT_MODEL_REPO),
         filename=model_spec.get("filename", DEFAULT_MODEL_FILE),
         model_type=model_spec.get("model_type", "llama"),
+        backend=model_spec.get("backend", "auto"),
         progress_cb=progress_cb,
     )
 

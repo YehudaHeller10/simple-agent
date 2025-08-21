@@ -82,6 +82,7 @@ class MainWindow(QWidget):
             "TinyLlama 1.1B Chat Q5",
             "Phi-2 Q4_K_M",
             "CodeLlama 7B Q4_K_M",
+            "GPT4All orca-mini-3b Q4",
         ])
         self.model_combo.setCurrentText("TinyLlama 1.1B Chat Q5")
 

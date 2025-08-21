@@ -11,7 +11,7 @@ a = Analysis(
     datas=collect_data_files('llama_cpp') + [
         ('Empty_Activity_android_studio_base_template', 'Empty_Activity_android_studio_base_template'),
     ],
-    hiddenimports=['llama_cpp', 'huggingface_hub', 'requests', 'typer'],
+    hiddenimports=['llama_cpp', 'huggingface_hub', 'requests', 'typer', 'ctransformers', 'gpt4all'],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],
