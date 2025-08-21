@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import Optional, Callable
 import requests
 
@@ -46,6 +47,9 @@ def build_api_llm_response(
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Optional ranking headers per OpenRouter docs
+            "HTTP-Referer": os.environ.get("OPENROUTER_HTTP_REFERER", "http://localhost"),
+            "X-Title": os.environ.get("OPENROUTER_X_TITLE", "Android Agent Developer"),
         }
         payload = {
             "model": model,
@@ -56,10 +60,26 @@ def build_api_llm_response(
             "temperature": 0.2,
             "top_p": 0.9,
         }
-        resp = requests.post(url, headers=headers, json=payload, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        # Simple retry with backoff for transient errors
+        transient = {408, 429, 500, 502, 503, 504, 524, 529}
+        last_err = None
+        for attempt in range(4):
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=120)
+                if resp.status_code in transient:
+                    raise requests.HTTPError(f"{resp.status_code} {resp.reason}")
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                last_err = e
+                if attempt < 3:
+                    wait = 2 ** attempt
+                    _notify(progress_cb, f"OpenRouter busy (retrying in {wait}s)...")
+                    time.sleep(wait)
+                else:
+                    break
+        raise RuntimeError("OpenRouter request failed. Please try again or choose another model.") from last_err
 
     # Gemini
     _notify(progress_cb, "Contacting Gemini...")
