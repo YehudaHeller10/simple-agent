@@ -3,7 +3,7 @@ import os
 from typing import Any, Dict
 
 
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".android_agent")
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), ".config")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 

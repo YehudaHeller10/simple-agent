@@ -6,7 +6,8 @@ from huggingface_hub import hf_hub_download
 
 DEFAULT_MODEL_REPO = os.environ.get("ANDROID_AGENT_MODEL_REPO", "TheBloke/CodeLlama-7B-GGUF")
 DEFAULT_MODEL_FILE = os.environ.get("ANDROID_AGENT_MODEL_FILE", "codellama-7b.Q4_K_M.gguf")
-MODEL_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".android_agent", "models")
+# Store models next to the app in a local 'models' directory
+MODEL_CACHE_DIR = os.path.join(os.path.dirname(__file__), "models")
 
 # Friendly presets for local models (small, CPU-friendly first)
 MODEL_REGISTRY: Dict[str, Dict[str, str]] = {
@@ -60,6 +61,17 @@ class GGUFModelManager:
         self._llm = None
 
         os.makedirs(self.cache_dir, exist_ok=True)
+        # Migrate models from old global cache if present
+        try:
+            old_cache = os.path.join(os.path.expanduser("~"), ".android_agent", "models")
+            old_path = os.path.join(old_cache, self.filename)
+            new_path = os.path.join(self.cache_dir, self.filename)
+            if os.path.exists(old_path) and not os.path.exists(new_path):
+                # Avoid large copies unexpectedly: copy only the selected model
+                import shutil
+                shutil.copy2(old_path, new_path)
+        except Exception:
+            pass
 
     def _notify(self, message: str) -> None:
         try:
