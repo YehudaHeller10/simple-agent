@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QMovie
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout,
@@ -31,6 +31,7 @@ class WorkerThread(QThread):
         self.api_provider = api_provider
         self.api_model = api_model
         self.api_key = api_key
+        self._stop = False
 
     def run(self):
         try:
@@ -41,11 +42,15 @@ class WorkerThread(QThread):
                 api_provider=self.api_provider if self.api_mode else None,
                 api_model=self.api_model if self.api_mode else None,
                 api_key=self.api_key if self.api_mode else None,
+                should_stop=lambda: self._stop,
             )
             target = agent.run(self.idea)
             self.done_signal.emit(str(target))
         except Exception as exc:
             self.error_signal.emit(str(exc))
+
+    def stop(self):
+        self._stop = True
 
 
 class StatusLine(QFrame):
@@ -187,6 +192,10 @@ class MainWindow(QMainWindow):
         self.button = QPushButton("Create my app")
         self.button.clicked.connect(self.start_agent)
 
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stop_agent)
+
         # Toggle to show generated code panel
         self.toggle_code_btn = QPushButton("Show generated code")
         self.toggle_code_btn.setCheckable(True)
@@ -194,6 +203,15 @@ class MainWindow(QMainWindow):
         self.toggle_code_btn.toggled.connect(self.on_toggle_code)
 
         self.status = StatusLine()
+        # Spinner
+        self.spinner = QLabel()
+        self.spinner.setVisible(False)
+        spinner_path = os.path.join(os.path.dirname(__file__), "spinner.gif")
+        if os.path.exists(spinner_path):
+            self.spinner_movie = QMovie(spinner_path)
+            self.spinner.setMovie(self.spinner_movie)
+        else:
+            self.spinner.setText("⏳")
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
@@ -205,9 +223,14 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.button)
         btn_row.addWidget(self.toggle_code_btn)
+        btn_row.addWidget(self.stop_btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
-        layout.addWidget(self.status)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.status)
+        status_row.addWidget(self.spinner)
+        status_row.addStretch()
+        layout.addLayout(status_row)
         layout.addWidget(self.log)
 
         # Code viewer panel (hidden until available)
@@ -283,6 +306,10 @@ class MainWindow(QMainWindow):
         self.worker.done_signal.connect(self.on_done)
         self.worker.error_signal.connect(self.on_error)
         self.worker.start()
+        self.stop_btn.setEnabled(True)
+        self.spinner.setVisible(True)
+        if hasattr(self, 'spinner_movie'):
+            self.spinner_movie.start()
 
     def on_done(self, target: str):
         self.append_log(f"✅ Your Android app is ready!\nSaved to: {target}")
@@ -291,10 +318,18 @@ class MainWindow(QMainWindow):
         self.toggle_code_btn.setEnabled(True)
         # Pre-populate file list for convenience
         self.populate_code_list(target)
+        self.stop_btn.setEnabled(False)
+        self.spinner.setVisible(False)
+        if hasattr(self, 'spinner_movie'):
+            self.spinner_movie.stop()
 
     def on_error(self, message: str):
         self.append_log(f"❌ Something went wrong: {message}")
         self.button.setDisabled(False)
+        self.stop_btn.setEnabled(False)
+        self.spinner.setVisible(False)
+        if hasattr(self, 'spinner_movie'):
+            self.spinner_movie.stop()
 
     def on_toggle_code(self, checked: bool):
         if checked and not self.last_project_dir:
@@ -331,6 +366,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             text = f"Could not read file: {e}"
         self.code_view.setPlainText(text)
+
+    def stop_agent(self):
+        if self.worker is not None:
+            self.worker.stop()
+            self.append_log("Stopping... this may take a few seconds.")
 
 
 def main():

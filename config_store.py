@@ -18,6 +18,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "model": "openrouter/auto",
         "key": "",
     },
+    "chats": [],  # list of {id, title, idea, project_path, created_at}
 }
 
 
