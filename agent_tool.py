@@ -41,6 +41,7 @@ class AndroidAgent:
         self.generated_layout: str = ""
         self.generated_manifest: str = ""
         self.generated_gradle: str = ""
+        self.package_name: str = "com.example.empty_activity_android_studio_base_template"
 
     def _notify(self, message: str) -> None:
         try:
@@ -157,8 +158,14 @@ class AndroidAgent:
         except Exception:
             existing = ""
         instruction = (
-            f"Create the main activity logic for an Android app: '{self.idea_text}'. "
-            f"Respond ONLY as JSON with keys 'filename' and 'content' for MainActivity.kt."
+            f"Create the main activity logic for an Android app: '{self.idea_text}'.\n"
+            f"Constraints:\n"
+            f"- Keep package EXACTLY '{self.package_name}'.\n"
+            f"- File path is 'app/src/main/java/com/example/empty_activity_android_studio_base_template/MainActivity.kt'.\n"
+            f"- Use a single Activity named MainActivity.\n"
+            f"- Do NOT add new classes/files (like ViewModels). Keep code self-contained.\n"
+            f"- Prefer simple Compose UI or classic Views; be minimal and working.\n"
+            f"Return ONLY JSON with keys 'filename' and 'content'."
         )
         extra = f"App name: {self.app_name}\nArchitecture plan (optional):\n{self.architecture_plan}"
         self._notify("📱 Creating your app's main screen...")
@@ -172,8 +179,9 @@ class AndroidAgent:
         except Exception:
             existing = ""
         instruction = (
-            "Create the XML layout matching this MainActivity.kt. Return ONLY JSON with 'filename' and 'content' "
-            "for activity_main.xml. Ensure all view IDs match any references in the activity."
+            "Create the XML layout 'app/src/main/res/layout/activity_main.xml' that matches this MainActivity.kt.\n"
+            "Constraints:\n- Keep it minimal.\n- Ensure any view IDs referenced by MainActivity exist.\n"
+            "Return ONLY JSON with 'filename' and 'content'."
         )
         extra = (
             "MainActivity.kt just generated:\n" + self.generated_main_activity
@@ -189,8 +197,10 @@ class AndroidAgent:
         except Exception:
             existing = ""
         instruction = (
-            "Create AndroidManifest.xml that fits the app. Return ONLY JSON with 'filename' and 'content'. "
-            "Include required permissions and settings."
+            "Create 'app/src/main/AndroidManifest.xml' for this app.\n"
+            "Constraints:\n"
+            f"- Use activity name '.MainActivity' and theme from template.\n- Do NOT add new activities.\n- Keep package implicit (no 'package' attr).\n"
+            "Return ONLY JSON with 'filename' and 'content'."
         )
         extra = (
             "MainActivity.kt:\n" + self.generated_main_activity +
@@ -207,8 +217,9 @@ class AndroidAgent:
         except Exception:
             existing = ""
         instruction = (
-            "Produce app/build.gradle.kts suitable for this Android project. "
-            "Return ONLY JSON with 'filename' and 'content'. Include any needed dependencies."
+            "Produce 'app/build.gradle.kts' compatible with the existing template.\n"
+            "Constraints:\n- Do NOT reference non-existing modules (no project(\":domain\")).\n- Use only AndroidX + Compose basics if needed.\n- Keep versions managed by the versions catalog (libs).\n"
+            "Return ONLY JSON with 'filename' and 'content'."
         )
         extra = (
             "MainActivity.kt:\n" + self.generated_main_activity
@@ -217,8 +228,18 @@ class AndroidAgent:
         response = self._llm_call(instruction, existing, extra)
         self.generated_gradle = self._write_from_response(app_gradle, response)
 
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        filepath.write_text(content, encoding="utf-8")
+    def _update_strings_xml(self, target_dir: Path) -> None:
+        strings_path = target_dir / "app/src/main/res/values/strings.xml"
+        try:
+            text = strings_path.read_text(encoding="utf-8")
+            import re
+            pattern = r"(<string\s+name=\"app_name\">)(.*?)(</string>)"
+            replacement = r"\1" + self.app_name + r"\3"
+            new_text = re.sub(pattern, replacement, text)
+            if new_text != text:
+                strings_path.write_text(new_text, encoding="utf-8")
+        except Exception:
+            pass
 
     def run(self, idea: str) -> Path:
         self.idea_text = idea
@@ -252,7 +273,8 @@ class AndroidAgent:
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
         self._generate_gradle(target_dir)
+        # Update app name in strings
+        self._update_strings_xml(target_dir)
 
         self._notify("✅ Your Android app is ready!")
         return target_dir
-
