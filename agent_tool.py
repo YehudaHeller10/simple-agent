@@ -20,10 +20,15 @@ class AgentProgress:
 
 
 class AndroidAgent:
-    def __init__(self, progress: Optional[AgentProgress] = None, model_key: Optional[str] = None,
-                 api_provider: Optional[str] = None, api_model: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, progress: Optional[AgentProgress] = None,
+                 local_backend: Optional[str] = "gpt4all",
+                 local_model: Optional[str] = "orca-mini-3b-gguf2-q4_0.gguf",
+                 api_provider: Optional[str] = None,
+                 api_model: Optional[str] = None,
+                 api_key: Optional[str] = None):
         self.progress = progress or AgentProgress(lambda _: None)
-        self.model_key = model_key or "CodeLlama 7B Q4_K_M"
+        self.local_backend = (local_backend or "gpt4all").strip()
+        self.local_model = (local_model or "orca-mini-3b-gguf2-q4_0.gguf").strip()
         self.api_provider = (api_provider or "").strip()
         self.api_model = (api_model or "").strip()
         self.api_key = (api_key or "").strip()
@@ -72,7 +77,13 @@ class AndroidAgent:
         if self._use_api():
             name = build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction)
         else:
-            name = build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
+            model_spec = {
+                "repo_id": "",
+                "filename": self.local_model,
+                "model_type": "llama",
+                "backend": self.local_backend or "gpt4all",
+            }
+            name = build_llm_response(instruction, model_spec=model_spec)
         return (name or "MyApp").strip().replace("\n", " ")[:40]
 
     def _ask_architecture(self, idea: str, app_name: str) -> str:
@@ -83,7 +94,13 @@ class AndroidAgent:
         )
         if self._use_api():
             return build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction)
-        return build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
+        model_spec = {
+            "repo_id": "",
+            "filename": self.local_model,
+            "model_type": "llama",
+            "backend": self.local_backend or "gpt4all",
+        }
+        return build_llm_response(instruction, model_spec=model_spec)
 
     def _llm_file_update(self, filepath: Path, friendly_label: str) -> None:
         try:
@@ -100,7 +117,13 @@ class AndroidAgent:
         if self._use_api():
             response = build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction, context=existing, progress_cb=self._notify)
         else:
-            response = build_llm_response(instruction, context=existing, model_spec=MODEL_REGISTRY.get(self.model_key))
+            model_spec = {
+                "repo_id": "",
+                "filename": self.local_model,
+                "model_type": "llama",
+                "backend": self.local_backend or "gpt4all",
+            }
+            response = build_llm_response(instruction, context=existing, model_spec=model_spec)
 
         # Best-effort JSON extraction
         try:
