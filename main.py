@@ -1,22 +1,15 @@
-import os
-import sys
-from pathlib import Path
-from typing import Optional
-
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QIcon, QAction, QMovie
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout,
-    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QSplitter
 )
+from PySide6.QtGui import QIcon, QAction, QMovie
+from PySide6.QtCore import Qt, QThread, Signal
 
 from agent_tool import AndroidAgent, AgentProgress
 from config_store import load_config, save_config
 
-
 APP_TITLE = "Android Agent Developer"
-
 
 class WorkerThread(QThread):
     progress_signal = Signal(str)
@@ -52,7 +45,6 @@ class WorkerThread(QThread):
     def stop(self):
         self._stop = True
 
-
 class StatusLine(QFrame):
     def __init__(self):
         super().__init__()
@@ -77,24 +69,20 @@ class StatusLine(QFrame):
         self.icon.setText("❌")
         self.text.setText(msg)
 
-
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, cfg=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.cfg = cfg or {}
         form = QFormLayout(self)
-        # Local (GPT4All) model
         self.local_model_combo = QComboBox()
         self.local_model_combo.setEditable(True)
         self.local_model_combo.setPlaceholderText("GPT4All model filename, e.g. orca-mini-3b-gguf2-q4_0.gguf")
-        # Mode radios
         self.mode_local = QRadioButton("Use Local Model")
         self.mode_api = QRadioButton("Use API Provider")
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.mode_local)
         self.mode_group.addButton(self.mode_api)
-        # API
         self.api_provider = QComboBox()
         self.api_provider.addItems(["OpenRouter", "Gemini"])
         self.api_model = QLineEdit()
@@ -102,21 +90,18 @@ class SettingsDialog(QDialog):
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.Password)
         self.api_key.setPlaceholderText("API Key")
-
         form.addRow(self.mode_local)
         form.addRow("Local model (GPT4All)", self.local_model_combo)
         form.addRow(self.mode_api)
         form.addRow("API Provider", self.api_provider)
         form.addRow("API Model", self.api_model)
         form.addRow("API Key", self.api_key)
-
         btns = QHBoxLayout()
         self.save_btn = QPushButton("Save")
         self.cancel_btn = QPushButton("Cancel")
         btns.addWidget(self.save_btn)
         btns.addWidget(self.cancel_btn)
         form.addRow(btns)
-
         self.save_btn.clicked.connect(self.accept)
         self.cancel_btn.clicked.connect(self.reject)
 
@@ -147,7 +132,6 @@ class SettingsDialog(QDialog):
         self.cfg["api"]["key"] = self.api_key.text().strip()
         return self.cfg
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -164,11 +148,9 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu("File")
         settings_menu = menubar.addMenu("Settings")
         about_menu = menubar.addMenu("About")
-
         self.settings_action = QAction("Preferences...", self)
         settings_menu.addAction(self.settings_action)
         self.settings_action.triggered.connect(self.open_settings)
-
         self.exit_action = QAction("Exit", self)
         file_menu.addAction(self.exit_action)
         self.exit_action.triggered.connect(self.close)
@@ -177,33 +159,23 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-
         title = QLabel("Create your Android app from an idea")
         title.setObjectName("title")
         subtitle = QLabel("Describe your app in simple words. We'll handle the rest.")
         subtitle.setObjectName("subtitle")
-
-        # No inline model/API controls; moved to Settings dialog
-
         self.input = QTextEdit()
         self.input.setPlaceholderText("e.g., A shopping list app with categories and reminders")
         self.input.setFixedHeight(100)
-
         self.button = QPushButton("Create my app")
         self.button.clicked.connect(self.start_agent)
-
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_agent)
-
-        # Toggle to show generated code panel
         self.toggle_code_btn = QPushButton("Show generated code")
         self.toggle_code_btn.setCheckable(True)
         self.toggle_code_btn.setEnabled(False)
         self.toggle_code_btn.toggled.connect(self.on_toggle_code)
-
         self.status = StatusLine()
-        # Spinner
         self.spinner = QLabel()
         self.spinner.setVisible(False)
         spinner_path = os.path.join(os.path.dirname(__file__), "spinner.gif")
@@ -212,11 +184,9 @@ class MainWindow(QMainWindow):
             self.spinner.setMovie(self.spinner_movie)
         else:
             self.spinner.setText("⏳")
-
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Progress will appear here...")
-
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(self.input)
@@ -231,9 +201,13 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self.spinner)
         status_row.addStretch()
         layout.addLayout(status_row)
-        layout.addWidget(self.log)
-
-        # Code viewer panel (hidden until available)
+        # Splitter: left chat list, right logs + code panel
+        splitter = QSplitter()
+        splitter.setOrientation(Qt.Horizontal)
+        self.chat_list = QListWidget()
+        self.chat_list.itemClicked.connect(self.on_chat_selected)
+        splitter.addWidget(self.chat_list)
+        # Code viewer panel
         self.code_panel = QFrame()
         self.code_panel.setObjectName("codePanel")
         self.code_panel.setVisible(False)
@@ -245,8 +219,15 @@ class MainWindow(QMainWindow):
         self.code_list.currentItemChanged.connect(self.on_code_item_changed)
         code_layout.addWidget(self.code_list, 1)
         code_layout.addWidget(self.code_view, 3)
-        layout.addWidget(self.code_panel)
-
+        # Right container
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.addWidget(self.log)
+        right_layout.addWidget(self.code_panel)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        layout.addWidget(splitter)
         self.setStyleSheet(
             """
             QMainWindow, QWidget { background: #0e1014; color: #E6E9EF; font-size: 14px; }
@@ -263,10 +244,10 @@ class MainWindow(QMainWindow):
             #codePanel { background: #0C0E12; border: 1px solid #2A2F3A; border-radius: 12px; padding: 6px; }
             """
         )
+        self.reload_chat_list()
 
     def open_settings(self):
         dlg = SettingsDialog(self, cfg=self.cfg.copy())
-        # Try to list some known GPT4All model names (can be edited by user)
         default_models = [
             "orca-mini-3b-gguf2-q4_0.gguf",
             "mistral-7b-instruct-v0.2.Q4_0.gguf",
@@ -316,12 +297,13 @@ class MainWindow(QMainWindow):
         self.button.setDisabled(False)
         self.last_project_dir = target
         self.toggle_code_btn.setEnabled(True)
-        # Pre-populate file list for convenience
         self.populate_code_list(target)
         self.stop_btn.setEnabled(False)
         self.spinner.setVisible(False)
         if hasattr(self, 'spinner_movie'):
             self.spinner_movie.stop()
+        self.save_chat_entry(target)
+        self.reload_chat_list()
 
     def on_error(self, message: str):
         self.append_log(f"❌ Something went wrong: {message}")
@@ -372,14 +354,36 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.append_log("Stopping... this may take a few seconds.")
 
+    def save_chat_entry(self, project_path: str):
+        from datetime import datetime
+        idea = self.input.toPlainText().strip()[:120]
+        title = idea if len(idea) <= 40 else idea[:37] + "..."
+        entry = {
+            "id": datetime.utcnow().isoformat(),
+            "title": title or "New Project",
+            "idea": idea,
+            "project_path": project_path,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        cfg = self.cfg
+        chats = cfg.get("chats", [])
+        chats.insert(0, entry)
+        cfg["chats"] = chats[:50]
+        save_config(cfg)
+        self.cfg = cfg
 
-def main():
-    app = QApplication(sys.argv)
-    win = MainWindow()
-    win.show()
-    sys.exit(app.exec())
+    def reload_chat_list(self):
+        self.chat_list.clear()
+        for chat in self.cfg.get("chats", []):
+            item = QListWidgetItem(chat.get("title", "Untitled"))
+            item.setData(Qt.UserRole, chat)
+            self.chat_list.addItem(item)
 
-
-if __name__ == "__main__":
-    main()
-
+    def on_chat_selected(self, item: QListWidgetItem):
+        chat = item.data(Qt.UserRole)
+        self.input.setPlainText(chat.get("idea", ""))
+        path = chat.get("project_path", "")
+        if path:
+            self.last_project_dir = path
+            self.populate_code_list(path)
+            self.toggle_code_btn.setEnabled(True)

@@ -140,6 +140,13 @@ class AndroidAgent:
             # Fallback: write raw response
             content = response
 
+        # Surface LLM response to UI (for user visibility)
+        try:
+            preview = response if len(response) <= 4000 else (response[:4000] + "\n...")
+            self._notify(f"🧠 {filepath.name} response:\n{preview}")
+        except Exception:
+            pass
+
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content, encoding="utf-8")
 
