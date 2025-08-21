@@ -7,7 +7,8 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout
+    QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout,
+    QListWidget, QListWidgetItem
 )
 
 from agent_tool import AndroidAgent, AgentProgress
@@ -136,11 +137,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(880, 640)
+        self.resize(1000, 680)
         self.cfg = load_config()
         self._init_menu()
         self._build_ui()
         self.worker: Optional[WorkerThread] = None
+        self.last_project_dir: Optional[str] = None
 
     def _init_menu(self):
         menubar = self.menuBar()
@@ -175,6 +177,12 @@ class MainWindow(QMainWindow):
         self.button = QPushButton("Create my app")
         self.button.clicked.connect(self.start_agent)
 
+        # Toggle to show generated code panel
+        self.toggle_code_btn = QPushButton("Show generated code")
+        self.toggle_code_btn.setCheckable(True)
+        self.toggle_code_btn.setEnabled(False)
+        self.toggle_code_btn.toggled.connect(self.on_toggle_code)
+
         self.status = StatusLine()
 
         self.log = QTextEdit()
@@ -184,9 +192,27 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(self.input)
-        layout.addWidget(self.button)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.button)
+        btn_row.addWidget(self.toggle_code_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
         layout.addWidget(self.status)
         layout.addWidget(self.log)
+
+        # Code viewer panel (hidden until available)
+        self.code_panel = QFrame()
+        self.code_panel.setObjectName("codePanel")
+        self.code_panel.setVisible(False)
+        code_layout = QHBoxLayout(self.code_panel)
+        self.code_list = QListWidget()
+        self.code_view = QTextEdit()
+        self.code_view.setReadOnly(True)
+        self.code_view.setPlaceholderText("Select a file to preview its content")
+        self.code_list.currentItemChanged.connect(self.on_code_item_changed)
+        code_layout.addWidget(self.code_list, 1)
+        code_layout.addWidget(self.code_view, 3)
+        layout.addWidget(self.code_panel)
 
         self.setStyleSheet(
             """
@@ -201,6 +227,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background: #4C8EF9; }
             QPushButton:disabled { background: #2A2F3A; color: #6B7280; }
             #statusLine { background: #0C0E12; border: 1px solid #2A2F3A; border-radius: 12px; padding: 10px; }
+            #codePanel { background: #0C0E12; border: 1px solid #2A2F3A; border-radius: 12px; padding: 6px; }
             """
         )
 
@@ -250,10 +277,50 @@ class MainWindow(QMainWindow):
     def on_done(self, target: str):
         self.append_log(f"✅ Your Android app is ready!\nSaved to: {target}")
         self.button.setDisabled(False)
+        self.last_project_dir = target
+        self.toggle_code_btn.setEnabled(True)
+        # Pre-populate file list for convenience
+        self.populate_code_list(target)
 
     def on_error(self, message: str):
         self.append_log(f"❌ Something went wrong: {message}")
         self.button.setDisabled(False)
+
+    def on_toggle_code(self, checked: bool):
+        if checked and not self.last_project_dir:
+            self.append_log("No project yet. Create an app first.")
+            self.toggle_code_btn.setChecked(False)
+            return
+        self.code_panel.setVisible(checked)
+
+    def populate_code_list(self, target: str):
+        from pathlib import Path
+        self.code_list.clear()
+        base = Path(target)
+        files = [
+            base / "app/src/main/java/com/example/empty_activity_android_studio_base_template/MainActivity.kt",
+            base / "app/src/main/res/layout/activity_main.xml",
+            base / "app/src/main/AndroidManifest.xml",
+            base / "app/build.gradle.kts",
+        ]
+        for p in files:
+            item = QListWidgetItem(p.name)
+            item.setData(Qt.UserRole, str(p))
+            self.code_list.addItem(item)
+        if self.code_list.count() > 0:
+            self.code_list.setCurrentRow(0)
+
+    def on_code_item_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
+        if not current:
+            self.code_view.clear()
+            return
+        path = current.data(Qt.UserRole)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception as e:
+            text = f"Could not read file: {e}"
+        self.code_view.setPlainText(text)
 
 
 def main():
