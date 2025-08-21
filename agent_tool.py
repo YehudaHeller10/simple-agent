@@ -34,6 +34,13 @@ class AndroidAgent:
         self.api_model = (api_model or "").strip()
         self.api_key = (api_key or "").strip()
         self.should_stop = should_stop or (lambda: False)
+        self.app_name: str = ""
+        self.idea_text: str = ""
+        self.architecture_plan: str = ""
+        self.generated_main_activity: str = ""
+        self.generated_layout: str = ""
+        self.generated_manifest: str = ""
+        self.generated_gradle: str = ""
 
     def _notify(self, message: str) -> None:
         try:
@@ -104,7 +111,111 @@ class AndroidAgent:
         }
         return build_llm_response(instruction, model_spec=model_spec)
 
-    def _llm_file_update(self, filepath: Path, friendly_label: str) -> None:
+    def _llm_call(self, instruction: str, existing: str, extra_context: str) -> str:
+        prompt = instruction
+        if extra_context:
+            prompt += "\n\nContext:\n" + extra_context
+        if existing:
+            prompt += "\n\nExisting file content:\n" + existing
+        if self._use_api():
+            return build_api_llm_response(self.api_provider, self.api_model, self.api_key, prompt, context=None, progress_cb=self._notify)
+        model_spec = {
+            "repo_id": "",
+            "filename": self.local_model,
+            "model_type": "llama",
+            "backend": self.local_backend or "gpt4all",
+        }
+        return build_llm_response(prompt, context=None, model_spec=model_spec, progress_cb=self._notify)
+
+    def _write_from_response(self, filepath: Path, response: str) -> str:
+        # Best-effort JSON extraction
+        try:
+            start = response.find('{')
+            end = response.rfind('}') + 1
+            json_str = response[start:end]
+            data = json.loads(json_str)
+            content = data.get("content", "")
+            if not content:
+                raise ValueError("Empty content from model")
+        except Exception:
+            content = response
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(content, encoding="utf-8")
+        # Surface LLM response
+        try:
+            preview = response if len(response) <= 4000 else (response[:4000] + "\n...")
+            self._notify(f"🧠 {filepath.name} response:\n{preview}")
+        except Exception:
+            pass
+        return content
+
+    def _generate_main_activity(self, target_dir: Path) -> None:
+        java_pkg_dir = target_dir / "app/src/main/java/com/example/empty_activity_android_studio_base_template"
+        main_activity = java_pkg_dir / "MainActivity.kt"
+        try:
+            existing = main_activity.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+        instruction = (
+            f"Create the main activity logic for an Android app: '{self.idea_text}'. "
+            f"Respond ONLY as JSON with keys 'filename' and 'content' for MainActivity.kt."
+        )
+        extra = f"App name: {self.app_name}\nArchitecture plan (optional):\n{self.architecture_plan}"
+        self._notify("📱 Creating your app's main screen...")
+        response = self._llm_call(instruction, existing, extra)
+        self.generated_main_activity = self._write_from_response(main_activity, response)
+
+    def _generate_layout(self, target_dir: Path) -> None:
+        layout_main = target_dir / "app/src/main/res/layout/activity_main.xml"
+        try:
+            existing = layout_main.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+        instruction = (
+            "Create the XML layout matching this MainActivity.kt. Return ONLY JSON with 'filename' and 'content' "
+            "for activity_main.xml. Ensure all view IDs match any references in the activity."
+        )
+        extra = (
+            "MainActivity.kt just generated:\n" + self.generated_main_activity
+        )
+        self._notify("🎨 Designing your app interface...")
+        response = self._llm_call(instruction, existing, extra)
+        self.generated_layout = self._write_from_response(layout_main, response)
+
+    def _generate_manifest(self, target_dir: Path) -> None:
+        manifest = target_dir / "app/src/main/AndroidManifest.xml"
+        try:
+            existing = manifest.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+        instruction = (
+            "Create AndroidManifest.xml that fits the app. Return ONLY JSON with 'filename' and 'content'. "
+            "Include required permissions and settings."
+        )
+        extra = (
+            "MainActivity.kt:\n" + self.generated_main_activity +
+            "\n\nactivity_main.xml:\n" + self.generated_layout
+        )
+        self._notify("🧭 Configuring your app settings...")
+        response = self._llm_call(instruction, existing, extra)
+        self.generated_manifest = self._write_from_response(manifest, response)
+
+    def _generate_gradle(self, target_dir: Path) -> None:
+        app_gradle = target_dir / "app/build.gradle.kts"
+        try:
+            existing = app_gradle.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+        instruction = (
+            "Produce app/build.gradle.kts suitable for this Android project. "
+            "Return ONLY JSON with 'filename' and 'content'. Include any needed dependencies."
+        )
+        extra = (
+            "MainActivity.kt:\n" + self.generated_main_activity
+        )
+        self._notify("🧩 Finalizing your app build setup...")
+        response = self._llm_call(instruction, existing, extra)
+        self.generated_gradle = self._write_from_response(app_gradle, response)
         try:
             existing = filepath.read_text(encoding="utf-8") if filepath.exists() else ""
         except Exception:
@@ -151,42 +262,37 @@ class AndroidAgent:
         filepath.write_text(content, encoding="utf-8")
 
     def run(self, idea: str) -> Path:
+        self.idea_text = idea
         # 1) Name selection
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
         self._notify("⚙️ Setting up your app foundation...")
-        app_name = self._ask_app_name(idea)
+        self.app_name = self._ask_app_name(idea)
 
         # 2) Copy template
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
-        target_dir = self._copy_template(app_name)
+        target_dir = self._copy_template(self.app_name)
 
         # 3) Plan
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
         self._notify("🔍 Planning your app structure...")
-        _ = self._ask_architecture(idea, app_name)
+        self.architecture_plan = self._ask_architecture(idea, self.app_name)
 
-        # 4) File generation
-        java_pkg_dir = target_dir / "app/src/main/java/com/example/empty_activity_android_studio_base_template"
-        main_activity = java_pkg_dir / "MainActivity.kt"
-        layout_main = target_dir / "app/src/main/res/layout/activity_main.xml"
-        manifest = target_dir / "app/src/main/AndroidManifest.xml"
-        app_gradle = target_dir / "app/build.gradle.kts"
-
+        # 4) File generation with chained context
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
-        self._llm_file_update(main_activity, "📱 Creating your app's main screen...")
+        self._generate_main_activity(target_dir)
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
-        self._llm_file_update(layout_main, "🎨 Designing your app interface...")
+        self._generate_layout(target_dir)
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
-        self._llm_file_update(manifest, "🧭 Configuring your app settings...")
+        self._generate_manifest(target_dir)
         if self.should_stop():
             raise RuntimeError("Operation cancelled")
-        self._llm_file_update(app_gradle, "🧩 Finalizing your app build setup...")
+        self._generate_gradle(target_dir)
 
         self._notify("✅ Your Android app is ready!")
         return target_dir
