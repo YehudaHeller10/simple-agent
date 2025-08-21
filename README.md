@@ -16,6 +16,14 @@ One-click tool to generate complete Android Studio projects from a plain English
 
 The first run downloads a compact coding model (GGUF). Subsequent runs use the cached model.
 
+### API Providers (optional)
+
+You can switch to API mode and use:
+- OpenRouter: set provider to OpenRouter, choose a model slug (e.g. `openrouter/auto` or a specific model name), paste your API key.
+- Gemini: set provider to Gemini, enter a Gemini model (e.g. `gemini-1.5-pro`), paste your API key.
+
+The app will route LLM calls to the selected provider and keep the same friendly workflow.
+
 ### Packaging (PyInstaller)
 
 To build a standalone executable:

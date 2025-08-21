@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTextEdit, QHBoxLayout, QFrame, QComboBox
+    QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox
 )
 
 from agent_tool import AndroidAgent, AgentProgress
@@ -21,14 +21,24 @@ class WorkerThread(QThread):
     done_signal = Signal(str)
     error_signal = Signal(str)
 
-    def __init__(self, idea: str, model_key: str):
+    def __init__(self, idea: str, model_key: str, api_mode: bool, api_provider: str, api_model: str, api_key: str):
         super().__init__()
         self.idea = idea
         self.model_key = model_key
+        self.api_mode = api_mode
+        self.api_provider = api_provider
+        self.api_model = api_model
+        self.api_key = api_key
 
     def run(self):
         try:
-            agent = AndroidAgent(progress=AgentProgress(self.progress_signal.emit), model_key=self.model_key)
+            agent = AndroidAgent(
+                progress=AgentProgress(self.progress_signal.emit),
+                model_key=self.model_key,
+                api_provider=self.api_provider if self.api_mode else None,
+                api_model=self.api_model if self.api_mode else None,
+                api_key=self.api_key if self.api_mode else None,
+            )
             target = agent.run(self.idea)
             self.done_signal.emit(str(target))
         except Exception as exc:
@@ -86,6 +96,16 @@ class MainWindow(QWidget):
         ])
         self.model_combo.setCurrentText("TinyLlama 1.1B Chat Q5")
 
+        # API toggle and fields
+        self.use_api = QCheckBox("Use API (OpenRouter/Gemini)")
+        self.api_provider_combo = QComboBox()
+        self.api_provider_combo.addItems(["OpenRouter", "Gemini"])
+        self.api_model_input = QLineEdit()
+        self.api_model_input.setPlaceholderText("e.g. openrouter: meta-llama/llama-3.1-8b-instruct or gemini-1.5-pro")
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setEchoMode(QLineEdit.Password)
+        self.api_key_input.setPlaceholderText("API Key")
+
         self.input = QTextEdit()
         self.input.setPlaceholderText("e.g., A shopping list app with categories and reminders")
         self.input.setFixedHeight(100)
@@ -104,6 +124,13 @@ class MainWindow(QWidget):
         layout.addWidget(self.input)
         layout.addWidget(QLabel("Model (for local use):"))
         layout.addWidget(self.model_combo)
+        layout.addWidget(self.use_api)
+        layout.addWidget(QLabel("API Provider:"))
+        layout.addWidget(self.api_provider_combo)
+        layout.addWidget(QLabel("API Model:"))
+        layout.addWidget(self.api_model_input)
+        layout.addWidget(QLabel("API Key:"))
+        layout.addWidget(self.api_key_input)
         layout.addWidget(self.button)
         layout.addWidget(self.status)
         layout.addWidget(self.log)
@@ -139,7 +166,11 @@ class MainWindow(QWidget):
         self.log.clear()
         self.append_log("Starting...")
         model_key = self.model_combo.currentText()
-        self.worker = WorkerThread(idea, model_key)
+        api_mode = self.use_api.isChecked()
+        api_provider = self.api_provider_combo.currentText()
+        api_model = self.api_model_input.text().strip()
+        api_key = self.api_key_input.text().strip()
+        self.worker = WorkerThread(idea, model_key, api_mode, api_provider, api_model, api_key)
         self.worker.progress_signal.connect(self.append_log)
         self.worker.done_signal.connect(self.on_done)
         self.worker.error_signal.connect(self.on_error)

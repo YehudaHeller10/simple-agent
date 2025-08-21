@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional, Dict
 
 from llm_responder import build_llm_response, MODEL_REGISTRY
+from api_llm_responder import build_api_llm_response
 
 
 BASE_DIR = Path(__file__).parent
@@ -19,9 +20,13 @@ class AgentProgress:
 
 
 class AndroidAgent:
-    def __init__(self, progress: Optional[AgentProgress] = None, model_key: Optional[str] = None):
+    def __init__(self, progress: Optional[AgentProgress] = None, model_key: Optional[str] = None,
+                 api_provider: Optional[str] = None, api_model: Optional[str] = None, api_key: Optional[str] = None):
         self.progress = progress or AgentProgress(lambda _: None)
         self.model_key = model_key or "CodeLlama 7B Q4_K_M"
+        self.api_provider = (api_provider or "").strip()
+        self.api_model = (api_model or "").strip()
+        self.api_key = (api_key or "").strip()
 
     def _notify(self, message: str) -> None:
         try:
@@ -56,12 +61,18 @@ class AndroidAgent:
                 pass
         return target_dir
 
+    def _use_api(self) -> bool:
+        return bool(self.api_provider and self.api_model and self.api_key)
+
     def _ask_app_name(self, idea: str) -> str:
         instruction = (
             "Choose a short, friendly Android app name for this idea. "
             "Respond ONLY with the name.\n\nIdea:" + idea
         )
-        name = build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
+        if self._use_api():
+            name = build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction)
+        else:
+            name = build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
         return (name or "MyApp").strip().replace("\n", " ")[:40]
 
     def _ask_architecture(self, idea: str, app_name: str) -> str:
@@ -70,6 +81,8 @@ class AndroidAgent:
             "List the files to implement with brief purpose. Keep it minimal."
             f"\n\nApp: {app_name}\nIdea: {idea}"
         )
+        if self._use_api():
+            return build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction)
         return build_llm_response(instruction, model_spec=MODEL_REGISTRY.get(self.model_key))
 
     def _llm_file_update(self, filepath: Path, friendly_label: str) -> None:
@@ -84,7 +97,10 @@ class AndroidAgent:
             "Target a production-ready Android implementation that matches the app idea."
         )
         self._notify(friendly_label)
-        response = build_llm_response(instruction, context=existing, model_spec=MODEL_REGISTRY.get(self.model_key))
+        if self._use_api():
+            response = build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction, context=existing, progress_cb=self._notify)
+        else:
+            response = build_llm_response(instruction, context=existing, model_spec=MODEL_REGISTRY.get(self.model_key))
 
         # Best-effort JSON extraction
         try:
