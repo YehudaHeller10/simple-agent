@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         splitter.setOrientation(Qt.Horizontal)
         self.chat_list = QListWidget()
         self.chat_list.itemClicked.connect(self.on_chat_selected)
+        self.chat_list.setMinimumWidth(220)
         splitter.addWidget(self.chat_list)
         # Code viewer panel
         self.code_panel = QFrame()
@@ -229,6 +230,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
+        splitter.setSizes([260, 740])
         layout.addWidget(splitter)
         self.setStyleSheet(
             """

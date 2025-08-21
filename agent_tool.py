@@ -216,47 +216,6 @@ class AndroidAgent:
         self._notify("🧩 Finalizing your app build setup...")
         response = self._llm_call(instruction, existing, extra)
         self.generated_gradle = self._write_from_response(app_gradle, response)
-        try:
-            existing = filepath.read_text(encoding="utf-8") if filepath.exists() else ""
-        except Exception:
-            existing = ""
-
-        instruction = (
-            "Given the existing file content, produce a JSON with filename and full replacement content. "
-            "Return ONLY valid JSON: {\"filename\":..., \"content\":...}. "
-            "Target a production-ready Android implementation that matches the app idea."
-        )
-        self._notify(friendly_label)
-        if self._use_api():
-            response = build_api_llm_response(self.api_provider, self.api_model, self.api_key, instruction, context=existing, progress_cb=self._notify)
-        else:
-            model_spec = {
-                "repo_id": "",
-                "filename": self.local_model,
-                "model_type": "llama",
-                "backend": self.local_backend or "gpt4all",
-            }
-            response = build_llm_response(instruction, context=existing, model_spec=model_spec)
-
-        # Best-effort JSON extraction
-        try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            json_str = response[start:end]
-            data = json.loads(json_str)
-            content = data.get("content", "")
-            if not content:
-                raise ValueError("Empty content from model")
-        except Exception:
-            # Fallback: write raw response
-            content = response
-
-        # Surface LLM response to UI (for user visibility)
-        try:
-            preview = response if len(response) <= 4000 else (response[:4000] + "\n...")
-            self._notify(f"🧠 {filepath.name} response:\n{preview}")
-        except Exception:
-            pass
 
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content, encoding="utf-8")
