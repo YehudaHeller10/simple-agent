@@ -8,12 +8,12 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
+    "mode": "local",  # 'local' or 'api'
     "local": {
         "backend": "gpt4all",
         "model": "orca-mini-3b-gguf2-q4_0.gguf",
     },
     "api": {
-        "enabled": False,
         "provider": "OpenRouter",
         "model": "openrouter/auto",
         "key": "",

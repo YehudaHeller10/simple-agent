@@ -8,7 +8,7 @@ from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup
 )
 
 from agent_tool import AndroidAgent, AgentProgress
@@ -83,8 +83,13 @@ class SettingsDialog(QDialog):
         self.local_model_combo = QComboBox()
         self.local_model_combo.setEditable(True)
         self.local_model_combo.setPlaceholderText("GPT4All model filename, e.g. orca-mini-3b-gguf2-q4_0.gguf")
+        # Mode radios
+        self.mode_local = QRadioButton("Use Local Model")
+        self.mode_api = QRadioButton("Use API Provider")
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.mode_local)
+        self.mode_group.addButton(self.mode_api)
         # API
-        self.api_enabled = QCheckBox("Enable API")
         self.api_provider = QComboBox()
         self.api_provider.addItems(["OpenRouter", "Gemini"])
         self.api_model = QLineEdit()
@@ -93,8 +98,9 @@ class SettingsDialog(QDialog):
         self.api_key.setEchoMode(QLineEdit.Password)
         self.api_key.setPlaceholderText("API Key")
 
+        form.addRow(self.mode_local)
         form.addRow("Local model (GPT4All)", self.local_model_combo)
-        form.addRow(self.api_enabled)
+        form.addRow(self.mode_api)
         form.addRow("API Provider", self.api_provider)
         form.addRow("API Model", self.api_model)
         form.addRow("API Key", self.api_key)
@@ -115,8 +121,12 @@ class SettingsDialog(QDialog):
 
     def load_from_cfg(self):
         self.local_model_combo.setEditText(self.cfg.get("local", {}).get("model", "orca-mini-3b-gguf2-q4_0.gguf"))
+        mode = self.cfg.get("mode", "local")
+        if mode == "api":
+            self.mode_api.setChecked(True)
+        else:
+            self.mode_local.setChecked(True)
         api = self.cfg.get("api", {})
-        self.api_enabled.setChecked(bool(api.get("enabled", False)))
         self.api_provider.setCurrentText(api.get("provider", "OpenRouter"))
         self.api_model.setText(api.get("model", "openrouter/auto"))
         self.api_key.setText(api.get("key", ""))
@@ -126,7 +136,7 @@ class SettingsDialog(QDialog):
         self.cfg["local"]["backend"] = "gpt4all"
         self.cfg["local"]["model"] = self.local_model_combo.currentText().strip()
         self.cfg.setdefault("api", {})
-        self.cfg["api"]["enabled"] = self.api_enabled.isChecked()
+        self.cfg["mode"] = "api" if self.mode_api.isChecked() else "local"
         self.cfg["api"]["provider"] = self.api_provider.currentText()
         self.cfg["api"]["model"] = self.api_model.text().strip()
         self.cfg["api"]["key"] = self.api_key.text().strip()
@@ -264,7 +274,7 @@ class MainWindow(QMainWindow):
         self.append_log("Starting...")
         local_model = self.cfg.get("local", {}).get("model", "orca-mini-3b-gguf2-q4_0.gguf")
         api_cfg = self.cfg.get("api", {})
-        api_mode = bool(api_cfg.get("enabled", False))
+        api_mode = self.cfg.get("mode", "local") == "api"
         api_provider = api_cfg.get("provider", "")
         api_model = api_cfg.get("model", "")
         api_key = api_cfg.get("key", "")
