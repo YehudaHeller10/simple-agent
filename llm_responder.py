@@ -113,7 +113,15 @@ class GGUFModelManager:
                 raise RuntimeError("Missing GPT4All runtime. Please install: pip install gpt4all") from e
             # Use our cache dir for GPT4All models too
             os.makedirs(self.cache_dir, exist_ok=True)
-            self._llm = GPT4All(model_name=model_path, model_path=self.cache_dir, allow_download=True)
+
+            # Check if model exists in our cache directory first
+            local_model_path = os.path.join(self.cache_dir, self.filename)
+            if os.path.exists(local_model_path):
+                # Load from existing file without allowing download
+                self._llm = GPT4All(model_path=local_model_path, allow_download=False)
+            else:
+                # Fallback to standard loading with download
+                self._llm = GPT4All(model_name=model_path, model_path=self.cache_dir, allow_download=True)
             self._backend = "gpt4all"
         else:
             # Try llama.cpp first
@@ -145,38 +153,117 @@ class GGUFModelManager:
                     ) from e_ctrans
         self._notify("AI engine is ready.")
 
-    def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1024) -> str:
+    def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1024,
+                 streaming_callback: Optional[Callable[[str], None]] = None) -> str:
         if self._llm is None:
             self.load()
         assert self._llm is not None
 
         prompt = f"<s>[INST]<<SYS>>\n{system_prompt}\n<</SYS>>\n{user_prompt}[/INST]"
+
+        # Debug logging
+        print(f"[DEBUG] Backend: {self._backend}")
+        print(f"[DEBUG] Streaming callback: {streaming_callback is not None}")
+        print(f"[DEBUG] Prompt length: {len(prompt)}")
+
         if self._backend == "llama_cpp":
-            output = self._llm(
-                prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=0.9,
-                stop=["</s>"]
-            )
-            return output["choices"][0]["text"].strip()
+            if streaming_callback:
+                # Streaming mode for llama_cpp
+                response = ""
+                for token in self._llm(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.9,
+                    stop=["</s>"],
+                    stream=True
+                ):
+                    chunk = token["choices"][0]["text"]
+                    response += chunk
+                    streaming_callback(chunk)
+                return response.strip()
+            else:
+                output = self._llm(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.9,
+                    stop=["</s>"]
+                )
+                return output["choices"][0]["text"].strip()
+
         elif self._backend == "ctransformers":
-            # ctransformers generation API
-            return self._llm(
-                prompt,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                top_p=0.9,
-                stop=["</s>"]
-            )
+            if streaming_callback:
+                # Streaming mode for ctransformers
+                response = ""
+                for token in self._llm(
+                    prompt,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.9,
+                    stop=["</s>"],
+                    stream=True
+                ):
+                    response += token
+                    streaming_callback(token)
+                return response
+            else:
+                return self._llm(
+                    prompt,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.9,
+                    stop=["</s>"]
+                )
         else:
-            # GPT4All API
-            return self._llm.generate(
-                prompt,
-                max_tokens=max_tokens,
-                temp=temperature,
-                top_p=0.9
-            )
+            # GPT4All API - simulate streaming since it doesn't have native streaming
+            if streaming_callback:
+                print("[DEBUG] Using GPT4All with streaming simulation")
+                try:
+                    # Generate full response first
+                    print("[DEBUG] Generating response...")
+                    full_response = self._llm.generate(
+                        prompt,
+                        max_tokens=max_tokens,
+                        temp=temperature,
+                        top_p=0.9
+                    )
+
+                    print(f"[DEBUG] Generated response length: {len(full_response)}")
+                    print(f"[DEBUG] Response preview: {full_response[:100]}...")
+
+                    # Split into words and send as tokens for better streaming effect
+                    import re
+                    import time
+
+                    # Split by words but keep spaces
+                    tokens = re.findall(r'\S+|\s+', full_response)
+                    print(f"[DEBUG] Split into {len(tokens)} tokens")
+
+                    for i, token in enumerate(tokens):
+                        streaming_callback(token)
+                        if i % 10 == 0:  # Log every 10th token
+                            print(f"[DEBUG] Sent token {i}: '{token}'")
+                        # Small delay to simulate real streaming
+                        time.sleep(0.03)
+
+                    print("[DEBUG] Streaming completed")
+                    return full_response
+
+                except Exception as e:
+                    print(f"[DEBUG] Generation failed: {e}")
+                    # If generation fails, return error message
+                    error_msg = f"Generation failed: {str(e)}"
+                    streaming_callback(error_msg)
+                    return error_msg
+            else:
+                print("[DEBUG] Using GPT4All without streaming")
+                return self._llm.generate(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temp=temperature,
+                    top_p=0.9
+                )
 
 
 def build_llm_response(task_instruction: str,
@@ -210,3 +297,35 @@ def build_llm_response(task_instruction: str,
 
     return manager.generate(system_prompt, user_prompt)
 
+
+def build_llm_response_streaming(task_instruction: str,
+                               context: Optional[str] = None,
+                               progress_cb: Optional[Callable[[str], None]] = None,
+                               streaming_cb: Optional[Callable[[str], None]] = None,
+                               model_spec: Optional[Dict[str, str]] = None) -> str:
+    """High-level helper that initializes the model and returns a response with streaming support.
+
+    This is the streaming version for real-time token display.
+    """
+    model_spec = model_spec or {
+        "repo_id": DEFAULT_MODEL_REPO,
+        "filename": DEFAULT_MODEL_FILE,
+        "model_type": "llama",
+    }
+    manager = GGUFModelManager(
+        repo_id=model_spec.get("repo_id", DEFAULT_MODEL_REPO),
+        filename=model_spec.get("filename", DEFAULT_MODEL_FILE),
+        model_type=model_spec.get("model_type", "llama"),
+        backend=model_spec.get("backend", "auto"),
+        progress_cb=progress_cb,
+    )
+
+    system_prompt = (
+        "You are an expert Android app developer. Always respond in valid JSON when asked, "
+        "using {\"filename\":..., \"content\":...}. Keep code concise, compilable, and production quality."
+    )
+    user_prompt = task_instruction
+    if context:
+        user_prompt += "\n\nExisting content:\n" + context
+
+    return manager.generate(system_prompt, user_prompt, streaming_callback=streaming_cb)

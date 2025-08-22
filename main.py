@@ -1,11 +1,12 @@
 import os
 import sys
+from typing import Optional
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTextEdit, QHBoxLayout, QFrame, QComboBox, QCheckBox, QDialog, QFormLayout,
+    QTextEdit, QHBoxLayout, QFrame, QComboBox, QDialog, QFormLayout,
     QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QSplitter
 )
-from PySide6.QtGui import QIcon, QAction, QMovie
+from PySide6.QtGui import QAction, QMovie, QTextCursor
 from PySide6.QtCore import Qt, QThread, Signal
 
 from agent_tool import AndroidAgent, AgentProgress
@@ -17,6 +18,7 @@ class WorkerThread(QThread):
     progress_signal = Signal(str)
     done_signal = Signal(str)
     error_signal = Signal(str)
+    streaming_signal = Signal(str)  # New signal for streaming tokens
 
     def __init__(self, idea: str, local_model: str, api_mode: bool, api_provider: str, api_model: str, api_key: str):
         super().__init__()
@@ -38,6 +40,7 @@ class WorkerThread(QThread):
                 api_model=self.api_model if self.api_mode else None,
                 api_key=self.api_key if self.api_mode else None,
                 should_stop=lambda: self._stop,
+                streaming_callback=self.streaming_signal.emit,  # Pass streaming callback
             )
             target = agent.run(self.idea)
             self.done_signal.emit(str(target))
@@ -134,6 +137,106 @@ class SettingsDialog(QDialog):
         self.cfg["api"]["key"] = self.api_key.text().strip()
         return self.cfg
 
+class StreamingOutputWidget(QFrame):
+    """Widget that displays LLM streaming output in real-time"""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("streamingOutput")
+        self.setVisible(False)
+        self.setMaximumHeight(200)
+
+        layout = QVBoxLayout(self)
+
+        # Header
+        header_layout = QHBoxLayout()
+        self.title_label = QLabel("🤖 AI Response Stream")
+        self.title_label.setObjectName("streamingTitle")
+
+        self.close_btn = QPushButton("×")
+        self.close_btn.setObjectName("streamingCloseBtn")
+        self.close_btn.setMaximumWidth(30)
+        self.close_btn.setMaximumHeight(30)
+        self.close_btn.clicked.connect(self.hide)
+
+        header_layout.addWidget(self.title_label)
+        header_layout.addStretch()
+        header_layout.addWidget(self.close_btn)
+
+        # Streaming text area
+        self.text_area = QTextEdit()
+        self.text_area.setReadOnly(True)
+        self.text_area.setObjectName("streamingText")
+        self.text_area.setMaximumHeight(150)
+
+        # Status indicators
+        status_layout = QHBoxLayout()
+        self.status_icon = QLabel("⏸️")
+        self.status_text = QLabel("Ready")
+        self.token_count = QLabel("Tokens: 0")
+
+        status_layout.addWidget(self.status_icon)
+        status_layout.addWidget(self.status_text)
+        status_layout.addStretch()
+        status_layout.addWidget(self.token_count)
+
+        layout.addLayout(header_layout)
+        layout.addWidget(self.text_area)
+        layout.addLayout(status_layout)
+
+        # Token counter
+        self._token_count = 0
+
+    def start_streaming(self, prompt: str = ""):
+        """Start streaming session"""
+        self.setVisible(True)
+        self.text_area.clear()
+        self._token_count = 0
+        self.status_icon.setText("🔄")
+        self.status_text.setText("Generating...")
+        self.token_count.setText("Tokens: 0")
+        if prompt:
+            self.text_area.append(f"💭 Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}\n")
+            self.text_area.append("🤖 Response:\n")
+
+    def append_token(self, token: str):
+        """Append a new token to the stream"""
+        # Only count actual tokens (words/punctuation), not individual characters
+        if token.strip():  # Only count non-whitespace tokens
+            self._token_count += 1
+
+        self.token_count.setText(f"Tokens: {self._token_count}")
+
+        # Move cursor to end and insert text
+        cursor = self.text_area.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(token)
+        self.text_area.setTextCursor(cursor)
+
+        # Auto-scroll to bottom
+        scrollbar = self.text_area.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def finish_streaming(self):
+        """Finish streaming session"""
+        self.status_icon.setText("✅")
+        self.status_text.setText("Completed")
+
+    def show_thinking(self):
+        """Show thinking indicator"""
+        self.setVisible(True)
+        self.text_area.clear()
+        self.status_icon.setText("🧠")
+        self.status_text.setText("Thinking...")
+        self.token_count.setText("Tokens: 0")
+        self.text_area.append("🧠 AI is thinking...")
+
+    def show_error(self, error_msg: str):
+        """Show error message"""
+        self.status_icon.setText("❌")
+        self.status_text.setText("Error")
+        self.text_area.append(f"\n❌ Error: {error_msg}")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -203,6 +306,10 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self.spinner)
         status_row.addStretch()
         layout.addLayout(status_row)
+        # Add streaming output widget
+        self.streaming_widget = StreamingOutputWidget()
+        layout.addWidget(self.streaming_widget)
+
         # Splitter: left chat list, right logs + code panel
         splitter = QSplitter()
         splitter.setOrientation(Qt.Horizontal)
@@ -246,6 +353,11 @@ class MainWindow(QMainWindow):
             QPushButton:disabled { background: #2A2F3A; color: #6B7280; }
             #statusLine { background: #0C0E12; border: 1px solid #2A2F3A; border-radius: 12px; padding: 10px; }
             #codePanel { background: #0C0E12; border: 1px solid #2A2F3A; border-radius: 12px; padding: 6px; }
+            #streamingOutput { background: #0C0E12; border: 1px solid #2A2F3A; border-radius: 12px; padding: 8px; margin: 8px 0; }
+            #streamingTitle { font-weight: bold; color: #4C8EF9; font-size: 16px; }
+            #streamingText { background: #0F1419; border: 1px solid #1A1F2E; border-radius: 8px; padding: 8px; font-family: 'Consolas', 'Monaco', monospace; }
+            #streamingCloseBtn { background: #E53E3E; color: white; border: none; border-radius: 15px; font-size: 18px; font-weight: bold; }
+            #streamingCloseBtn:hover { background: #C53030; }
             """
         )
         self.reload_chat_list()
@@ -290,11 +402,10 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.append_log)
         self.worker.done_signal.connect(self.on_done)
         self.worker.error_signal.connect(self.on_error)
+        self.worker.streaming_signal.connect(self.streaming_widget.append_token)
         self.worker.start()
-        self.stop_btn.setEnabled(True)
-        self.spinner.setVisible(True)
-        if hasattr(self, 'spinner_movie'):
-            self.spinner_movie.start()
+        # Show streaming widget when starting
+        self.streaming_widget.start_streaming(idea)
 
     def on_done(self, target: str):
         self.append_log(f"✅ Your Android app is ready!\nSaved to: {target}")
@@ -306,6 +417,8 @@ class MainWindow(QMainWindow):
         self.spinner.setVisible(False)
         if hasattr(self, 'spinner_movie'):
             self.spinner_movie.stop()
+        # Finish streaming
+        self.streaming_widget.finish_streaming()
         self.save_chat_entry(target)
         self.reload_chat_list()
 
@@ -316,6 +429,8 @@ class MainWindow(QMainWindow):
         self.spinner.setVisible(False)
         if hasattr(self, 'spinner_movie'):
             self.spinner_movie.stop()
+        # Show error in streaming widget
+        self.streaming_widget.show_error(message)
 
     def on_toggle_code(self, checked: bool):
         if checked and not self.last_project_dir:

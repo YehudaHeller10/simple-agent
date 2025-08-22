@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Dict
 
-from llm_responder import build_llm_response, MODEL_REGISTRY
+from llm_responder import build_llm_response, build_llm_response_streaming, MODEL_REGISTRY
 from api_llm_responder import build_api_llm_response
 
 
@@ -26,7 +26,8 @@ class AndroidAgent:
                  api_provider: Optional[str] = None,
                  api_model: Optional[str] = None,
                  api_key: Optional[str] = None,
-                 should_stop: Optional[Callable[[], bool]] = None):
+                 should_stop: Optional[Callable[[], bool]] = None,
+                 streaming_callback: Optional[Callable[[str], None]] = None):
         self.progress = progress or AgentProgress(lambda _: None)
         self.local_backend = (local_backend or "gpt4all").strip()
         self.local_model = (local_model or "orca-mini-3b-gguf2-q4_0.gguf").strip()
@@ -34,6 +35,7 @@ class AndroidAgent:
         self.api_model = (api_model or "").strip()
         self.api_key = (api_key or "").strip()
         self.should_stop = should_stop or (lambda: False)
+        self.streaming_callback = streaming_callback
         self.app_name: str = ""
         self.idea_text: str = ""
         self.architecture_plan: str = ""
@@ -126,7 +128,11 @@ class AndroidAgent:
             "model_type": "llama",
             "backend": self.local_backend or "gpt4all",
         }
-        return build_llm_response(prompt, context=None, model_spec=model_spec, progress_cb=self._notify)
+        # Use streaming version if callback is available
+        if self.streaming_callback:
+            return build_llm_response_streaming(prompt, context=None, model_spec=model_spec, progress_cb=self._notify, streaming_cb=self.streaming_callback)
+        else:
+            return build_llm_response(prompt, context=None, model_spec=model_spec, progress_cb=self._notify)
 
     def _write_from_response(self, filepath: Path, response: str) -> str:
         # Best-effort JSON extraction
